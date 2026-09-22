@@ -41,7 +41,7 @@ const PRESETS = {
   Бургунди: { back: '#6e2233', seat: '#7d2b3c', arms: '#6e2233', pillows: '#c9a227' },
 };
 
-const DEFAULT_COLORS = { back: '#5b6472', seat: '#69737f', arms: '#5b6472', pillows: '#c98f5f' };
+const DEFAULT_COLORS = { back: '#1c5bd0', seat: '#2b6fe0', arms: '#1c5bd0', pillows: '#f08c00' };
 
 export default function App() {
   const [colors, setColors] = useState(DEFAULT_COLORS);

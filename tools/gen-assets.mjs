@@ -259,6 +259,64 @@ function twill() {
     0.06 * Math.sin(TAU * 32 * u) +
     0.06 * Math.sin(TAU * 32 * v));
 }
+// кожа — мелкая «галечная» фактура (низкоконтрастная, средняя серость)
+function leather() {
+  return tile((u, v) =>
+    0.5 +
+    0.05 * Math.sin(TAU * 22 * u) * Math.sin(TAU * 22 * v) +
+    0.03 * Math.sin(TAU * (11 * u + 11 * v)) +
+    0.02 * Math.sin(TAU * 44 * v));
+}
+// букле/рогожка — крупные «петли» (периодические бугорки)
+function boucle() {
+  return tile((u, v) => {
+    const n = 10; // число петель на тайл
+    const px = (u * n) % 1 - 0.5;
+    const py = (v * n) % 1 - 0.5;
+    const loop = Math.exp(-(px * px + py * py) / (2 * 0.16 * 0.16)); // бугорок
+    return 0.46 + 0.16 * loop;
+  });
+}
+
+/* --------------------- per-material sheen-карты --------------------- */
+// Обобщённый блик: fn(x,y)→0..1 интенсивность, альфа = силуэт (иначе чёрный фон).
+function makeSheenBaked(fn) {
+  const b = newBuf(W, H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const inside = sofaCoverage(x, y);
+    const v = clamp01(fn(x, y));
+    put(b, x, y, v, v, v, inside);
+  }
+  return b;
+}
+const gauss = (x, y, cx, cy, s) => Math.exp(-(((x - cx) ** 2 + (y - cy) ** 2) / (2 * s * s)));
+// велюр: широкое мягкое свечение сверху + по подушкам
+function sheenVelour() {
+  return makeSheenBaked((x, y) =>
+    0.45 * band(y, 95, 55) * insideX(x, 150, 760) +
+    0.5 * gauss(x, y, 350, 165, 70) + 0.5 * gauss(x, y, 610, 165, 70) +
+    0.25 * band(y, 300, 30) * insideX(x, 220, 700));
+}
+// кожа: редкие узкие specular-блики (отблески на изгибах)
+function sheenLeather() {
+  return makeSheenBaked((x, y) => {
+    let s = 0.7 * gauss(x, y, 300, 120, 26) + 0.7 * gauss(x, y, 640, 130, 24);
+    s += 0.55 * gauss(x, y, 200, 300, 20) + 0.55 * gauss(x, y, 720, 300, 20);
+    s += 0.5 * band(y, 88, 12) * insideX(x, 160, 750); // тонкая кромка спинки
+    return s;
+  });
+}
+// лён: почти без блика — едва заметное ровное свечение
+function sheenLinen() {
+  return makeSheenBaked((x, y) => 0.12 * band(y, 110, 70) * insideX(x, 150, 760));
+}
+// букле: частые микро-искры по всей поверхности
+function sheenBoucle() {
+  return makeSheenBaked((x, y) => {
+    const sp = 0.5 * (Math.sin(x * 0.9) * Math.sin(y * 0.9) + 1); // сетка искр
+    return 0.35 * sp * band(y, 150, 160) + 0.25 * sp * insideX(x, 150, 760) * band(y, 300, 90);
+  });
+}
 
 /* ------------------------------ run ------------------------------ */
 const files = {
@@ -274,6 +332,12 @@ const files = {
   'fabrics/velour.png': velour(),
   'fabrics/linen.png': linen(),
   'fabrics/twill.png': twill(),
+  'fabrics/leather.png': leather(),
+  'fabrics/boucle.png': boucle(),
+  'sheens/velour.png': sheenVelour(),
+  'sheens/leather.png': sheenLeather(),
+  'sheens/linen.png': sheenLinen(),
+  'sheens/boucle.png': sheenBoucle(),
 };
 // Спинку не дублируем подушками: перерисуем back строго как блок спинки.
 files['zones/back.png'] = makeZone((x, y) => cov(sdRoundBox(x, y, ...BACK)));

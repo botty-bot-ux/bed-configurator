@@ -1,0 +1,40 @@
+{
+  "id": "default",
+  "label": "Диван «Осло»",
+  "width": 900,
+  "height": 520,
+  "layers": {
+    "base": "/sofa/base.png",
+    "silhouette": "/sofa/silhouette.png",
+    "zones": {
+      "back": "/sofa/zones/back.png",
+      "seat": "/sofa/zones/seat.png",
+      "arms": "/sofa/zones/arms.png",
+      "pillows": "/sofa/zones/pillows.png"
+    },
+    "ao": "/sofa/ao.png",
+    "sheen": "/sofa/sheen.png",
+    "details": ["/sofa/details.png"]
+  },
+  "zones": [
+    { "id": "back", "label": "Спинка", "default": "#1f8a7d" },
+    { "id": "seat", "label": "Сидушка", "default": "#1f8a7d", "linkedTo": "back" },
+    { "id": "arms", "label": "Подлокотники", "default": "#1f8a7d", "linkedTo": "back" },
+    { "id": "pillows", "label": "Основание", "default": "#1f8a7d", "linkedTo": "back" }
+  ],
+  "materials": [
+    { "id": "velour", "label": "Велюр", "fabric": "/sofa/fabrics/velour.png", "blend": "soft-light", "scale": 1.4, "strength": 0.6, "sheen": "/sofa/sheens/velour.png", "sheenOpacity": 0.45 },
+    { "id": "linen", "label": "Лён", "fabric": "/sofa/fabrics/linen.png", "blend": "overlay", "scale": 1.0, "strength": 0.5, "sheen": "/sofa/sheens/linen.png", "sheenOpacity": 0.18 },
+    { "id": "twill", "label": "Твил", "fabric": "/sofa/fabrics/twill.png", "blend": "hard-light", "scale": 0.9, "strength": 0.45, "sheen": "/sofa/sheens/velour.png", "sheenOpacity": 0.3 },
+    { "id": "leather", "label": "Кожа", "fabric": "/sofa/fabrics/leather.png", "blend": "soft-light", "scale": 1.2, "strength": 0.55, "sheen": "/sofa/sheens/leather.png", "sheenOpacity": 0.6 },
+    { "id": "boucle", "label": "Букле", "fabric": "/sofa/fabrics/boucle.png", "blend": "overlay", "scale": 1.6, "strength": 0.55, "sheen": "/sofa/sheens/boucle.png", "sheenOpacity": 0.35 },
+    { "id": "none", "label": "Без ткани", "fabric": null, "sheen": "", "sheenOpacity": 0 }
+  ],
+  "presets": [
+    { "label": "Мята", "colors": { "back": "#1f8a7d", "seat": "#1f8a7d", "arms": "#1f8a7d", "pillows": "#1f8a7d" } },
+    { "label": "Индиго", "colors": { "back": "#2f4ba0", "seat": "#2f4ba0", "arms": "#2f4ba0", "pillows": "#2f4ba0" } },
+    { "label": "Терракота", "colors": { "back": "#c25a34", "seat": "#c25a34", "arms": "#c25a34", "pillows": "#c25a34" } },
+    { "label": "Олива", "colors": { "back": "#6f7a33", "seat": "#6f7a33", "arms": "#6f7a33", "pillows": "#6f7a33" } },
+    { "label": "Графит", "colors": { "back": "#4b5560", "seat": "#4b5560", "arms": "#4b5560", "pillows": "#4b5560" } }
+  ]
+}

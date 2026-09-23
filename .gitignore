@@ -7,3 +7,5 @@ dist-ssr
 .trash
 
 assets_src
+outputs
+dev.log

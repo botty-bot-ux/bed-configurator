@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { CSSProperties } from 'react';
-import { Application, Container, Sprite, TilingSprite, Assets } from 'pixi.js';
-import type { Texture } from 'pixi.js';
+import { Application, Container, Sprite, TilingSprite, Assets, Texture } from 'pixi.js';
 
 /* ============================ Типы ============================ */
 
@@ -23,7 +22,7 @@ export interface SofaModel {
   height: number;
 }
 
-/** Ткань — тайлинг поверх поверхности. */
+/** Ткань/материал — тайлинг поверх поверхности + собственный блик. */
 export interface Fabric {
   texture: string;
   /** множитель размера тайла (1 = исходный тайл) */
@@ -31,6 +30,10 @@ export interface Fabric {
   /** интенсивность 0..1 (через alpha слоя) */
   strength?: number;
   blend?: 'overlay' | 'soft-light' | 'hard-light';
+  /** своя карта блика для материала (screen). Иначе — model.sheen */
+  sheenTex?: string;
+  /** дефолтная интенсивность блика этого материала (для инициализации слайдера) */
+  sheenOpacity?: number;
 }
 
 export interface SofaConfiguratorProps {
@@ -93,6 +96,21 @@ export async function createEngine(host: HTMLElement, model: SofaModel): Promise
   let destroyed = false;
   const load = (url: string) => Assets.load<Texture>(url);
 
+  // Рендер по требованию: конфигуратор статичен — не крутим автоцикл.
+  // Перерисовку коалесим на ближайший кадр (rAF): сразу после назначения
+  // свежезагруженной текстуры GPU-ресурс ещё не поднят, и синхронный
+  // app.render() падает в батчере. rAF даёт пикселю загрузиться.
+  app.ticker.stop();
+  let renderQueued = false;
+  const invalidate = () => {
+    if (destroyed || renderQueued) return;
+    renderQueued = true;
+    requestAnimationFrame(() => {
+      renderQueued = false;
+      if (!destroyed) app.render();
+    });
+  };
+
   /* --- base: светотень --- */
   const base = new Sprite(await load(model.base));
   base.blendMode = 'normal';
@@ -128,14 +146,40 @@ export async function createEngine(host: HTMLElement, model: SofaModel): Promise
     root.addChild(ao);
   }
 
-  /* --- sheen: screen (блики) --- */
-  let sheen: Sprite | null = null;
-  if (model.sheen) {
-    sheen = new Sprite(await load(model.sheen));
-    sheen.blendMode = 'screen';
-    sheen.visible = false;
-    root.addChild(sheen);
-  }
+  /* --- sheen: screen (блики); текстуру задаёт материал, не модель --- */
+  const sheen = new Sprite();
+  sheen.blendMode = 'screen';
+  sheen.visible = false;
+  root.addChild(sheen);
+  let sheenUrl: string | null = null;
+  let sheenAlpha = 0;
+  let sheenToken = 0;
+  const applySheenTex = (url: string | null) => {
+    const token = ++sheenToken;
+    if (!url) {
+      sheenUrl = null;
+      sheen.texture = Texture.EMPTY;
+      sheen.visible = false;
+      invalidate();
+      return;
+    }
+    if (url === sheenUrl) {
+      sheen.visible = sheenAlpha > 0;
+      invalidate();
+      return;
+    }
+    load(url)
+      .then((tex) => {
+        if (destroyed || token !== sheenToken) return; // устаревшая загрузка блика
+        sheen.texture = tex;
+        sheenUrl = url;
+        sheen.visible = sheenAlpha > 0;
+        invalidate();
+      })
+      .catch((e) => console.error('sheen load failed', url, e));
+  };
+  // дефолт из модели (материал перекроет своим sheenTex сразу после)
+  if (model.sheen) applySheenTex(model.sheen);
 
   /* --- details: normal поверх (не перекрашиваются) --- */
   const details: Sprite[] = [];
@@ -161,11 +205,15 @@ export async function createEngine(host: HTMLElement, model: SofaModel): Promise
           s.visible = false; // нет цвета → остаётся серая база
         }
       }
+      invalidate();
     },
 
     setFabric(fabric) {
-      if (destroyed || !fabric?.texture) {
+      if (destroyed) return;
+      if (!fabric?.texture) {
         if (fabricSprite) fabricSprite.visible = false;
+        applySheenTex(fabric?.sheenTex ?? model.sheen ?? null);
+        invalidate();
         return;
       }
       const token = ++fabricToken;
@@ -187,25 +235,30 @@ export async function createEngine(host: HTMLElement, model: SofaModel): Promise
         fabricSprite.tileScale.set(sc, sc);
         fabricSprite.alpha = clamp01(fabric.strength ?? 1);
         fabricSprite.visible = true;
+        invalidate();
       };
       if (fabricUrl === url && fabricSprite) {
         apply(fabricSprite.texture); // уже загружено — просто перенастроить
       } else {
         load(url).then(apply).catch((e) => console.error('fabric load failed', url, e));
       }
+      // блик материала (или фолбэк модели)
+      applySheenTex(fabric.sheenTex ?? model.sheen ?? null);
     },
 
     setSheen(opacity) {
-      if (destroyed || !sheen) return;
-      const o = clamp01(opacity);
-      sheen.alpha = o;
-      sheen.visible = o > 0;
+      if (destroyed) return;
+      sheenAlpha = clamp01(opacity);
+      sheen.alpha = sheenAlpha;
+      sheen.visible = sheenAlpha > 0 && sheenUrl != null;
+      invalidate();
     },
 
     destroy() {
       if (destroyed) return;
       destroyed = true;
-      fabricToken++; // отменяем незавершённые загрузки ткани
+      fabricToken++; // отменяем незавершённые загрузки ткани/блика
+      sheenToken++;
       try {
         // НЕ разрушаем текстуры — они закешированы в Assets для повторного движка
         app.destroy(true, { children: true, texture: false, textureSource: false });
@@ -216,6 +269,7 @@ export async function createEngine(host: HTMLElement, model: SofaModel): Promise
     },
   };
 
+  invalidate(); // первый кадр после сборки сцены
   return engine;
 }
 

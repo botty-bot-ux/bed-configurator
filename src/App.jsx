@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import BedConfigurator from './BedConfigurator.tsx';
 import { loadBedManifest, toFabric } from './bedManifest';
 
-const MANIFEST_URL = '/beds/default/manifest.json';
+const MANIFEST_URL = `${import.meta.env.BASE_URL}beds/default/manifest.json`;
 
 /** Стили наложения, доступные в UI (значение = blend-режим Pixi). */
 const BLEND_MODES = [

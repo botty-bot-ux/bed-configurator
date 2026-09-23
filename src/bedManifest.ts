@@ -1,5 +1,13 @@
 import type { BedModel, BlendMode, Fabric, LayerId } from './BedConfigurator';
 
+/**
+ * Приводит путь из манифеста (вид `/bed/base.png`) к URL относительно базы сборки.
+ * На dev BASE_URL='/', на GitHub Pages — '/<repo>/'. Пустые/null проходят как есть.
+ */
+const BASE = import.meta.env.BASE_URL;
+const withBase = (p: string | null | undefined): string | null =>
+  p ? BASE + p.replace(/^\/+/, '') : null;
+
 /** Слой с ползунком прозрачности и выбором стиля наложения. */
 export interface PanelMeta {
   id: LayerId;
@@ -69,22 +77,22 @@ export interface LoadedBed {
   defaultBlend: Record<LayerId, BlendMode>;
 }
 
-/** Материал манифеста → проп движка Fabric (blend/прозрачность — в состоянии слоёв). */
+/** Материал манифеста → проп движка Fabric (путь уже с базой; blend — в состоянии слоёв). */
 export function toFabric(m: MaterialMeta): Fabric {
   return {
-    texture: m.fabric ?? '',
+    texture: withBase(m.fabric) ?? '',
     scale: m.scale,
   };
 }
 
-/** Приводит манифест к типу модели движка (фон подставляет loader). */
-export function manifestToModel(m: BedManifest, background?: string): BedModel {
+/** Приводит манифест к типу модели движка (все пути — с базой сборки). */
+export function manifestToModel(m: BedManifest, background?: string | null): BedModel {
   return {
-    background,
-    base: m.layers.base,
-    silhouette: m.layers.silhouette,
-    ao: m.layers.ao,
-    sheen: m.layers.sheen,
+    background: withBase(background) ?? undefined,
+    base: withBase(m.layers.base) as string,
+    silhouette: withBase(m.layers.silhouette) as string,
+    ao: withBase(m.layers.ao) ?? undefined,
+    sheen: withBase(m.layers.sheen) ?? undefined,
     width: m.width,
     height: m.height,
   };
@@ -106,16 +114,21 @@ export async function loadBedManifest(url: string): Promise<LoadedBed> {
     defaultBlend[p.id] = p.blend;
   }
 
-  const backgrounds = json.backgrounds ?? [];
-  const defaultBg = backgrounds.find((b) => b.texture) ?? backgrounds[0] ?? null;
+  const rawBackgrounds = json.backgrounds ?? [];
+  const defaultBgRaw = rawBackgrounds.find((b) => b.texture) ?? rawBackgrounds[0] ?? null;
+  // текстуры фонов отдаём уже с базой — App подставляет их в движок как есть
+  const backgrounds: BackgroundMeta[] = rawBackgrounds.map((b) => ({
+    ...b,
+    texture: withBase(b.texture),
+  }));
 
   return {
-    model: manifestToModel(json, defaultBg?.texture ?? undefined),
+    model: manifestToModel(json, defaultBgRaw?.texture ?? null),
     panels: json.panels,
     materials: json.materials,
     presets: json.presets ?? [],
     backgrounds,
-    defaultBackgroundId: defaultBg?.id ?? null,
+    defaultBackgroundId: defaultBgRaw?.id ?? null,
     defaultColor: json.color ?? null,
     defaultOpacity,
     defaultBlend,

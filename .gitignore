@@ -8,4 +8,4 @@ dist-ssr
 
 assets_src
 outputs
-dev.log
+*.log

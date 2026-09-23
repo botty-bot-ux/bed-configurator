@@ -1,12 +1,10 @@
-import type { Fabric, SofaModel } from './SofaConfigurator';
+import type { Fabric, LayerId, SofaModel } from './SofaConfigurator';
 
-/** Метаданные зоны для UI (подпись, дефолтный цвет, связь «красить вместе»). */
-export interface ZoneMeta {
-  id: string;
+/** Слой с ползунком прозрачности (подпись + дефолт 0..1). */
+export interface PanelMeta {
+  id: LayerId;
   label: string;
-  default: string;
-  /** id другой зоны, цвет которой наследуется при смене (напр. сидушка/подлокотники ← спинка) */
-  linkedTo?: string;
+  default: number;
 }
 
 /** Материал в манифесте: ткань + собственный блик + параметры смешивания. */
@@ -16,14 +14,16 @@ export interface MaterialMeta {
   fabric: string | null;
   blend?: 'overlay' | 'soft-light' | 'hard-light';
   scale?: number;
+  /** дефолтная прозрачность слоя «Ткань» при выборе материала */
   strength?: number;
   sheen: string | null;
+  /** дефолтная прозрачность слоя «Блики» при выборе материала */
   sheenOpacity: number;
 }
 
 export interface ColorPreset {
   label: string;
-  colors: Record<string, string>;
+  color: string;
 }
 
 export interface SofaManifest {
@@ -31,36 +31,37 @@ export interface SofaManifest {
   label: string;
   width: number;
   height: number;
+  /** цвет корпуса по умолчанию (null — серая база) */
+  color: string | null;
   layers: {
     base: string;
     silhouette: string;
-    zones: Record<string, string>;
     ao?: string;
     sheen?: string;
     details?: string[];
   };
-  zones: ZoneMeta[];
+  /** слои, у которых в UI есть ползунок прозрачности */
+  panels: PanelMeta[];
   materials: MaterialMeta[];
   presets?: ColorPreset[];
 }
 
 export interface LoadedSofa {
   model: SofaModel;
-  zones: ZoneMeta[];
+  panels: PanelMeta[];
   materials: MaterialMeta[];
   presets: ColorPreset[];
-  defaultColors: Record<string, string>;
+  defaultColor: string | null;
+  defaultOpacity: Record<LayerId, number>;
 }
 
-/** Материал манифеста → проп движка Fabric. */
+/** Материал манифеста → проп движка Fabric (без прозрачности — она в opacity). */
 export function toFabric(m: MaterialMeta): Fabric {
   return {
     texture: m.fabric ?? '',
     scale: m.scale,
-    strength: m.strength,
     blend: m.blend,
     sheenTex: m.sheen ?? '',
-    sheenOpacity: m.sheenOpacity,
   };
 }
 
@@ -69,7 +70,6 @@ export function manifestToModel(m: SofaManifest): SofaModel {
   return {
     base: m.layers.base,
     silhouette: m.layers.silhouette,
-    zones: m.layers.zones,
     ao: m.layers.ao,
     sheen: m.layers.sheen,
     details: m.layers.details,
@@ -87,14 +87,15 @@ export async function loadSofaManifest(url: string): Promise<LoadedSofa> {
   if (!res.ok) throw new Error(`Манифест не найден: ${url} (${res.status})`);
   const json = (await res.json()) as SofaManifest;
 
-  const defaultColors: Record<string, string> = {};
-  for (const z of json.zones) defaultColors[z.id] = z.default;
+  const defaultOpacity = {} as Record<LayerId, number>;
+  for (const p of json.panels) defaultOpacity[p.id] = p.default;
 
   return {
     model: manifestToModel(json),
-    zones: json.zones,
+    panels: json.panels,
     materials: json.materials,
     presets: json.presets ?? [],
-    defaultColors,
+    defaultColor: json.color ?? null,
+    defaultOpacity,
   };
 }

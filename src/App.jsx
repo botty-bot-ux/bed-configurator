@@ -38,11 +38,11 @@ export default function App() {
 }
 
 function Configurator({ sofa }) {
-  const { model, zones, materials, presets, defaultColors } = sofa;
+  const { model, panels, materials, presets, defaultColor, defaultOpacity } = sofa;
 
-  const [colors, setColors] = useState(defaultColors);
+  const [color, setColor] = useState(defaultColor);
   const [materialId, setMaterialId] = useState(materials[0]?.id ?? 'none');
-  const [sheen, setSheen] = useState(materials[0]?.sheenOpacity ?? 0.35);
+  const [opacity, setOpacity] = useState(defaultOpacity);
 
   const material = useMemo(
     () => materials.find((m) => m.id === materialId) ?? materials[0],
@@ -50,18 +50,16 @@ function Configurator({ sofa }) {
   );
   const fabric = useMemo(() => (material ? toFabric(material) : { texture: '' }), [material]);
 
-  const setColor = (id, hex) => {
-    setColors((c) => {
-      const next = { ...c, [id]: hex };
-      // связанные зоны (сидушка/подлокотники) наследуют цвет корпуса
-      for (const z of zones) if (z.linkedTo === id) next[z.id] = hex;
-      return next;
-    });
-  };
+  const setLayer = (id, v) => setOpacity((o) => ({ ...o, [id]: v }));
 
   const pickMaterial = (m) => {
     setMaterialId(m.id);
-    setSheen(m.sheenOpacity ?? 0);
+    // материал задаёт дефолты прозрачности ткани и бликов
+    setOpacity((o) => ({
+      ...o,
+      fabric: m.strength ?? o.fabric,
+      sheen: m.sheenOpacity ?? 0,
+    }));
   };
 
   return (
@@ -70,43 +68,43 @@ function Configurator({ sofa }) {
         {/* Сцена */}
         <div className="rounded-2xl bg-white/70 p-6 shadow-sm ring-1 ring-slate-900/5">
           <div className="rounded-xl bg-[radial-gradient(120%_120%_at_50%_0%,#ffffff_0%,#e9edf3_60%,#dbe1ea_100%)] p-4">
-            <SofaConfigurator
-              model={model}
-              fabric={fabric}
-              colors={colors}
-              sheenOpacity={sheen}
-            />
+            <SofaConfigurator model={model} fabric={fabric} color={color} opacity={opacity} />
           </div>
         </div>
 
         {/* Управление */}
         <div className="space-y-6">
-          <Card title="Цвет зон">
-            <div className="space-y-3">
-              {zones.map((z) => (
-                <div key={z.id} className="flex items-center justify-between gap-3">
-                  <span className="text-sm">{z.label}</span>
-                  <div className="flex items-center gap-2">
-                    <code className="w-20 text-right text-xs text-slate-400">{colors[z.id]}</code>
-                    <input
-                      type="color"
-                      value={colors[z.id]}
-                      onChange={(e) => setColor(z.id, e.target.value)}
-                      className="h-8 w-10 rounded-lg"
-                      aria-label={z.label}
-                    />
-                  </div>
-                </div>
-              ))}
+          <Card title="Цвет корпуса">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <input
+                  type="color"
+                  value={color ?? '#cccccc'}
+                  onChange={(e) => setColor(e.target.value)}
+                  className="h-9 w-12 rounded-lg"
+                  aria-label="Цвет корпуса"
+                />
+                <code className="text-xs text-slate-400">{color ?? 'без цвета'}</code>
+              </div>
+              <button
+                onClick={() => setColor(color ? null : defaultColor ?? '#c9ccd1')}
+                className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium transition hover:border-slate-300 hover:bg-slate-100"
+              >
+                {color ? 'Убрать цвет' : 'Вернуть цвет'}
+              </button>
             </div>
             {presets.length > 0 && (
               <div className="mt-4 flex flex-wrap gap-2">
                 {presets.map((p) => (
                   <button
                     key={p.label}
-                    onClick={() => setColors({ ...colors, ...p.colors })}
-                    className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium transition hover:border-slate-300 hover:bg-slate-100"
+                    onClick={() => setColor(p.color)}
+                    className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium transition hover:border-slate-300 hover:bg-slate-100"
                   >
+                    <span
+                      className="h-3 w-3 rounded-full ring-1 ring-black/10"
+                      style={{ background: p.color }}
+                    />
                     {p.label}
                   </button>
                 ))}
@@ -133,20 +131,29 @@ function Configurator({ sofa }) {
             </div>
           </Card>
 
-          <Card title="Блики">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs text-slate-400">интенсивность</span>
-              <span className="text-xs tabular-nums text-slate-500">{sheen.toFixed(2)}</span>
+          <Card title="Прозрачность слоёв">
+            <div className="space-y-3">
+              {panels.map((p) => (
+                <div key={p.id}>
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-sm">{p.label}</span>
+                    <span className="text-xs tabular-nums text-slate-500">
+                      {(opacity[p.id] ?? 0).toFixed(2)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={opacity[p.id] ?? 0}
+                    onChange={(e) => setLayer(p.id, parseFloat(e.target.value))}
+                    className="w-full accent-slate-800"
+                    aria-label={p.label}
+                  />
+                </div>
+              ))}
             </div>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={sheen}
-              onChange={(e) => setSheen(parseFloat(e.target.value))}
-              className="w-full accent-slate-800"
-            />
           </Card>
         </div>
       </div>
@@ -163,8 +170,8 @@ function Shell({ title, children }) {
             {title ? `${title} · ` : ''}Конфигуратор · PixiJS v8
           </h1>
           <p className="text-sm text-slate-500">
-            base → зоны(color+tint) → материал(tiling + свой блик) → AO(multiply) → детали.
-            Модель и палитра берутся из JSON-манифеста.
+            Один цвет корпуса + ползунок прозрачности на каждый слой:
+            основа · цвет · ткань · тени · блики · детали. Модель и палитра берутся из JSON-манифеста.
           </p>
         </header>
         {children}

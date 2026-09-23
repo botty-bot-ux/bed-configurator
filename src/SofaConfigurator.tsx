@@ -4,17 +4,18 @@ import { Application, Container, Sprite, TilingSprite, Assets, Texture } from 'p
 
 /* ============================ Типы ============================ */
 
+/** Слой, которым управляет пользователь (ползунок прозрачности). */
+export type LayerId = 'base' | 'color' | 'fabric' | 'ao' | 'sheen' | 'details';
+
 /** Модель изделия: набор путей к спрайтам-слоям и размер «холста» в пикселях арта. */
 export interface SofaModel {
   /** серая светотень (несёт яркость) */
   base: string;
-  /** маска контура (для поверхности с тканью) */
+  /** маска контура: и для перекраски (blend 'color'), и для клиппинга ткани */
   silhouette: string;
-  /** маски зон: seat / back / arms / pillows — перекрашиваются tint'ом */
-  zones: Record<string, string>;
   /** запечённые тени (multiply) */
   ao?: string;
-  /** блики (screen) */
+  /** дефолтный блик (screen), если материал не задал свой */
   sheen?: string;
   /** детали поверх — ножки/кант, не перекрашиваются (normal) */
   details?: string[];
@@ -27,28 +28,26 @@ export interface Fabric {
   texture: string;
   /** множитель размера тайла (1 = исходный тайл) */
   scale?: number;
-  /** интенсивность 0..1 (через alpha слоя) */
-  strength?: number;
   blend?: 'overlay' | 'soft-light' | 'hard-light';
   /** своя карта блика для материала (screen). Иначе — model.sheen */
   sheenTex?: string;
-  /** дефолтная интенсивность блика этого материала (для инициализации слайдера) */
-  sheenOpacity?: number;
 }
 
 export interface SofaConfiguratorProps {
   model: SofaModel;
   fabric: Fabric;
-  colors: Record<string, string>;
-  sheenOpacity?: number;
+  /** цвет корпуса через blend 'color' (null — оставить серую базу) */
+  color: string | null;
+  /** прозрачность каждого слоя 0..1 */
+  opacity: Record<LayerId, number>;
   style?: CSSProperties;
 }
 
 /** Императивный движок: точечные обновления без пересоздания сцены. */
 export interface Engine {
-  setColors(colors: Record<string, string>): void;
+  setColor(hex: string | null): void;
   setFabric(fabric: Fabric): void;
-  setSheen(opacity: number): void;
+  setLayerOpacity(id: LayerId, v: number): void;
   destroy(): void;
 }
 
@@ -66,9 +65,9 @@ const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 /**
  * Создаёт Pixi-сцену внутри host и собирает изделие слоями снизу вверх:
- *   base (normal) → zones (color, tint) → [fabric (masked)] → ao (multiply)
- *   → sheen (screen) → details (normal).
- * Возвращает движок после загрузки всех текстур модели.
+ *   base (normal) → color (silhouette, 'color'+tint) → fabric (masked tiling)
+ *   → ao (multiply) → sheen (screen) → details (normal).
+ * Каждый слой получает независимую прозрачность через setLayerOpacity.
  */
 export async function createEngine(host: HTMLElement, model: SofaModel): Promise<Engine> {
   const app = new Application();
@@ -83,7 +82,6 @@ export async function createEngine(host: HTMLElement, model: SofaModel): Promise
     backgroundAlpha: 0, // прозрачный фон — страница просвечивает вокруг силуэта
   });
 
-  // канвас фиксированного внутреннего размера, растягивается по CSS
   const canvas = app.canvas as HTMLCanvasElement;
   canvas.style.width = '100%';
   canvas.style.height = 'auto';
@@ -111,28 +109,33 @@ export async function createEngine(host: HTMLElement, model: SofaModel): Promise
     });
   };
 
+  /* --- состояние прозрачности слоёв + выбранный цвет --- */
+  const alpha: Record<LayerId, number> = {
+    base: 1,
+    color: 1,
+    fabric: 1,
+    ao: 1,
+    sheen: 1,
+    details: 1,
+  };
+  let currentColor: string | null = null;
+
   /* --- base: светотень --- */
   const base = new Sprite(await load(model.base));
   base.blendMode = 'normal';
   root.addChild(base);
 
-  /* --- zones: маски зон с blend 'color' + tint --- */
-  const zoneSprites: Record<string, Sprite> = {};
-  const zoneLayer = new Container();
-  root.addChild(zoneLayer);
-  for (const [name, url] of Object.entries(model.zones)) {
-    const s = new Sprite(await load(url));
-    s.blendMode = 'color';
-    s.visible = false; // покажем при назначении цвета
-    zoneSprites[name] = s;
-    zoneLayer.addChild(s);
-  }
+  /* --- color: перекраска корпуса = силуэт с blend 'color' + tint --- */
+  const colorSprite = new Sprite(await load(model.silhouette));
+  colorSprite.blendMode = 'color';
+  colorSprite.visible = false; // покажем при выборе цвета
+  root.addChild(colorSprite);
 
   /* --- surface: тканевый тайлинг, обрезанный по силуэту --- */
   const surface = new Container();
   root.addChild(surface);
-  const silhouetteSprite = new Sprite(await load(model.silhouette));
-  surface.mask = silhouetteSprite;
+  const silhouetteMask = new Sprite(await load(model.silhouette));
+  surface.mask = silhouetteMask;
 
   let fabricSprite: TilingSprite | null = null;
   let fabricUrl: string | null = null;
@@ -146,40 +149,13 @@ export async function createEngine(host: HTMLElement, model: SofaModel): Promise
     root.addChild(ao);
   }
 
-  /* --- sheen: screen (блики); текстуру задаёт материал, не модель --- */
+  /* --- sheen: screen (блики); текстуру задаёт материал --- */
   const sheen = new Sprite();
   sheen.blendMode = 'screen';
   sheen.visible = false;
   root.addChild(sheen);
   let sheenUrl: string | null = null;
-  let sheenAlpha = 0;
   let sheenToken = 0;
-  const applySheenTex = (url: string | null) => {
-    const token = ++sheenToken;
-    if (!url) {
-      sheenUrl = null;
-      sheen.texture = Texture.EMPTY;
-      sheen.visible = false;
-      invalidate();
-      return;
-    }
-    if (url === sheenUrl) {
-      sheen.visible = sheenAlpha > 0;
-      invalidate();
-      return;
-    }
-    load(url)
-      .then((tex) => {
-        if (destroyed || token !== sheenToken) return; // устаревшая загрузка блика
-        sheen.texture = tex;
-        sheenUrl = url;
-        sheen.visible = sheenAlpha > 0;
-        invalidate();
-      })
-      .catch((e) => console.error('sheen load failed', url, e));
-  };
-  // дефолт из модели (материал перекроет своим sheenTex сразу после)
-  if (model.sheen) applySheenTex(model.sheen);
 
   /* --- details: normal поверх (не перекрашиваются) --- */
   const details: Sprite[] = [];
@@ -190,21 +166,70 @@ export async function createEngine(host: HTMLElement, model: SofaModel): Promise
     root.addChild(s);
   }
 
+  /* ------------------- единый пересчёт видимости/альфы ------------------- */
+  const refresh = () => {
+    base.alpha = clamp01(alpha.base);
+
+    if (currentColor && alpha.color > 0) {
+      colorSprite.tint = hexToNum(currentColor);
+      colorSprite.alpha = clamp01(alpha.color);
+      colorSprite.visible = true;
+    } else {
+      colorSprite.visible = false;
+    }
+
+    if (fabricSprite) {
+      fabricSprite.alpha = clamp01(alpha.fabric);
+      fabricSprite.visible = alpha.fabric > 0;
+    }
+
+    if (ao) {
+      ao.alpha = clamp01(alpha.ao);
+      ao.visible = alpha.ao > 0;
+    }
+
+    sheen.alpha = clamp01(alpha.sheen);
+    sheen.visible = sheenUrl != null && alpha.sheen > 0;
+
+    for (const d of details) {
+      d.alpha = clamp01(alpha.details);
+      d.visible = alpha.details > 0;
+    }
+  };
+
+  const applySheenTex = (url: string | null) => {
+    const token = ++sheenToken;
+    if (!url) {
+      sheenUrl = null;
+      sheen.texture = Texture.EMPTY;
+      refresh();
+      invalidate();
+      return;
+    }
+    if (url === sheenUrl) {
+      refresh();
+      invalidate();
+      return;
+    }
+    load(url)
+      .then((tex) => {
+        if (destroyed || token !== sheenToken) return; // устаревшая загрузка блика
+        sheen.texture = tex;
+        sheenUrl = url;
+        refresh();
+        invalidate();
+      })
+      .catch((e) => console.error('sheen load failed', url, e));
+  };
+  if (model.sheen) applySheenTex(model.sheen);
+
   /* ------------------------- публичный API ------------------------- */
 
   const engine: Engine = {
-    setColors(colors) {
+    setColor(hex) {
       if (destroyed) return;
-      for (const name of Object.keys(zoneSprites)) {
-        const s = zoneSprites[name];
-        const hex = colors[name];
-        if (hex) {
-          s.tint = hexToNum(hex);
-          s.visible = true;
-        } else {
-          s.visible = false; // нет цвета → остаётся серая база
-        }
-      }
+      currentColor = hex;
+      refresh();
       invalidate();
     },
 
@@ -213,7 +238,6 @@ export async function createEngine(host: HTMLElement, model: SofaModel): Promise
       if (!fabric?.texture) {
         if (fabricSprite) fabricSprite.visible = false;
         applySheenTex(fabric?.sheenTex ?? model.sheen ?? null);
-        invalidate();
         return;
       }
       const token = ++fabricToken;
@@ -233,8 +257,7 @@ export async function createEngine(host: HTMLElement, model: SofaModel): Promise
         fabricSprite.blendMode = fabric.blend ?? 'soft-light';
         const sc = fabric.scale ?? 1;
         fabricSprite.tileScale.set(sc, sc);
-        fabricSprite.alpha = clamp01(fabric.strength ?? 1);
-        fabricSprite.visible = true;
+        refresh();
         invalidate();
       };
       if (fabricUrl === url && fabricSprite) {
@@ -242,15 +265,13 @@ export async function createEngine(host: HTMLElement, model: SofaModel): Promise
       } else {
         load(url).then(apply).catch((e) => console.error('fabric load failed', url, e));
       }
-      // блик материала (или фолбэк модели)
       applySheenTex(fabric.sheenTex ?? model.sheen ?? null);
     },
 
-    setSheen(opacity) {
+    setLayerOpacity(id, v) {
       if (destroyed) return;
-      sheenAlpha = clamp01(opacity);
-      sheen.alpha = sheenAlpha;
-      sheen.visible = sheenAlpha > 0 && sheenUrl != null;
+      alpha[id] = clamp01(v);
+      refresh();
       invalidate();
     },
 
@@ -269,6 +290,7 @@ export async function createEngine(host: HTMLElement, model: SofaModel): Promise
     },
   };
 
+  refresh();
   invalidate(); // первый кадр после сборки сцены
   return engine;
 }
@@ -278,14 +300,14 @@ export async function createEngine(host: HTMLElement, model: SofaModel): Promise
 export default function SofaConfigurator({
   model,
   fabric,
-  colors,
-  sheenOpacity = 0.35,
+  color,
+  opacity,
   style,
 }: SofaConfiguratorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<Engine | null>(null);
-  const latest = useRef({ fabric, colors, sheenOpacity });
-  latest.current = { fabric, colors, sheenOpacity };
+  const latest = useRef({ fabric, color, opacity });
+  latest.current = { fabric, color, opacity };
 
   // Пересоздаём движок только при смене модели.
   useEffect(() => {
@@ -306,10 +328,10 @@ export default function SofaConfigurator({
         return;
       }
       engineRef.current = eng;
-      const { fabric: f, colors: c, sheenOpacity: s } = latest.current;
-      eng.setColors(c);
+      const { fabric: f, color: c, opacity: o } = latest.current;
+      for (const id of Object.keys(o) as LayerId[]) eng.setLayerOpacity(id, o[id]);
+      eng.setColor(c);
       eng.setFabric(f);
-      eng.setSheen(s);
     })();
 
     return () => {
@@ -321,9 +343,13 @@ export default function SofaConfigurator({
   }, [model]);
 
   // Точечные обновления при смене пропсов (движок уже готов).
-  useEffect(() => { engineRef.current?.setColors(colors); }, [colors]);
+  useEffect(() => { engineRef.current?.setColor(color); }, [color]);
   useEffect(() => { engineRef.current?.setFabric(fabric); }, [fabric]);
-  useEffect(() => { engineRef.current?.setSheen(sheenOpacity); }, [sheenOpacity]);
+  useEffect(() => {
+    const eng = engineRef.current;
+    if (!eng) return;
+    for (const id of Object.keys(opacity) as LayerId[]) eng.setLayerOpacity(id, opacity[id]);
+  }, [opacity]);
 
   return (
     <div

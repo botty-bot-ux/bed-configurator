@@ -14,8 +14,8 @@ const ROOT = path.resolve(__dirname, '..');
 const OUT = path.join(ROOT, 'public', 'sofa');
 const SRC_FAB = path.join(ROOT, 'assets_src', 'fabrics');
 
-const W = 900;
-const H = 520;
+const W = 1024;
+const H = 1024;
 
 const src = process.argv[2]
   ? path.resolve(process.argv[2])
@@ -63,7 +63,7 @@ async function saveRGBA(rgba, w, h, file) {
 
 /* ----------------------------- загрузка ----------------------------- */
 const { data } = await sharp(src)
-  .resize(W, H, { fit: 'fill' }) // 1.79 → 1.73: незначительное сжатие по горизонтали
+  .resize(W, H, { fit: 'fill' }) // исходный рендер квадратный 1024×1024 — fit без искажений
   .removeAlpha()
   .raw()
   .toBuffer({ resolveWithObject: true });
@@ -153,37 +153,9 @@ console.log(`bbox x[${x0}..${x1}] y[${y0}..${y1}] w=${bw} h=${bh}  meanLum=${mea
   await saveRGBA(rgba, W, H, path.join(OUT, 'silhouette.png'));
 }
 
-/* ----------------------------- 3. зоны ----------------------------- */
-// Нормализованные координаты внутри bbox (fx,fy ∈ [0,1]). Анатомия этого дивана:
-//   back    — подушки спинки (верх)                    fy < 0.52
-//   seat    — подушки сиденья                           0.52 ≤ fy < 0.78
-//   pillows — юбка/основание под сидушкой (центр)       0.78 ≤ fy < 0.885, 0.16<fx<0.84
-//   arms    — левый/правый подлокотник (колонки)         (fx<0.20 | fx>0.80) & 0.28≤fy<0.90
-// Порядок отрисовки в манифесте: back, seat, pillows, arms (arms поверх — замыкает бока).
-const ZONES = {
-  back:    (fx, fy) => fy < 0.52,
-  seat:    (fx, fy) => fy >= 0.52 && fy < 0.78,
-  pillows: (fx, fy) => fy >= 0.78 && fy < 0.885 && fx > 0.16 && fx < 0.84,
-  arms:    (fx, fy) => (fx < 0.20 || fx > 0.80) && fy >= 0.28 && fy < 0.90,
-};
-
-const FEATHER = 4;
-for (const [name, fn] of Object.entries(ZONES)) {
-  let a = new Float32Array(N);
-  for (let i = 0; i < N; i++) {
-    const x = i % W, y = (i / W) | 0;
-    const fx = (x - x0) / bw, fy = (y - y0) / bh;
-    a[i] = fn(fx, fy) ? 1 : 0;
-  }
-  a = boxBlur(a, W, H, FEATHER);
-  const rgba = new Uint8ClampedArray(N * 4);
-  for (let i = 0; i < N; i++) {
-    const alpha = clamp(a[i], 0, 1) * fgA[i]; // обрезаем по контуру
-    rgba[i * 4] = 255; rgba[i * 4 + 1] = 255; rgba[i * 4 + 2] = 255;
-    rgba[i * 4 + 3] = Math.round(alpha * 255);
-  }
-  await saveRGBA(rgba, W, H, path.join(OUT, 'zones', `${name}.png`));
-}
+/* ----------------------------- 3. зоны (упразднены) ----------------------------- */
+// Цветовые зоны по деталям убраны: перекраска теперь одна на весь корпус —
+// движок красит base через silhouette (blend 'color'). Отдельные маски зон не нужны.
 
 /* --------------------------- 4. ao.png (multiply) --------------------------- */
 {
@@ -305,4 +277,4 @@ for (const name of ['velour', 'linen']) {
   await makeFabricTile(path.join(SRC_FAB, `${name}.png`), path.join(OUT, 'fabrics', `${name}.png`));
 }
 
-console.log('done: base, silhouette, zones{back,seat,pillows,arms}, ao, sheen(+velour/linen/leather/boucle), details, fabrics{velour,linen}');
+console.log('done: base, silhouette, ao, sheen(+velour/linen/leather/boucle), details, fabrics{velour,linen}');

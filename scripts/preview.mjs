@@ -1,21 +1,22 @@
-// preview.mjs — офлайн-реконструкция итоговой сцены (стек слоёв Pixi) через sharp,
-// чтобы получить PNG-скриншот результата без браузера.
-// base → цвет(по силуэту, color-blend) → ткань(soft-light, по силуэту) → ao(multiply) → sheen(screen) → детали.
+// preview.mjs — офлайн-реконструкция итоговой сцены кровати (стек слоёв Pixi) через sharp,
+// чтобы получить PNG результата без браузера. Стек без зон:
+//   background → base → color (единая перекраска корпуса: L из базы + H/S цвета, по маске силуэта)
+//            → ткань (blend материала, по силуэту) → ao (multiply) → sheen (screen).
+// Дефолты читаются из манифеста, чтобы превью совпадало с приложением.
 import sharp from 'sharp';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const S = (p) => path.join(ROOT, 'public', 'sofa', p);
-const W = 1024, H = 1024;
+const S = (p) => path.join(ROOT, 'public', 'bed', p);
 
-// дефолты из манифеста
-const BODY_COLOR = '#1f8a7d';
-const FABRIC = 'fabrics/velour.png', FABRIC_STRENGTH = 0.6;
-const SHEEN_FILE = 'sheens/velour.png', SHEEN_OPACITY = 0.45;
+const manifest = JSON.parse(readFileSync(path.join(ROOT, 'public', 'beds', 'default', 'manifest.json'), 'utf8'));
+const W = manifest.width, H = manifest.height;
+const N = W * H;
 
-/* ---- цвет: hex → hsl → перекраска с сохранением яркости базы (blend 'color') ---- */
+const lum = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
 function hexHsl(hex) {
   let h = hex.replace('#', '');
   const r = parseInt(h.slice(0, 2), 16) / 255, g = parseInt(h.slice(2, 4), 16) / 255, b = parseInt(h.slice(4, 6), 16) / 255;
@@ -24,12 +25,12 @@ function hexHsl(hex) {
   if (mx !== mn) {
     const d = mx - mn;
     s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
-    if (mx === r) hh = ((g - b) / d + (g < b ? 6 : 0));
+    if (mx === r) hh = (g - b) / d + (g < b ? 6 : 0);
     else if (mx === g) hh = (b - r) / d + 2;
     else hh = (r - g) / d + 4;
     hh /= 6;
   }
-  return [hh, s, l];
+  return [hh, s];
 }
 function hsl2rgb(h, s, l) {
   if (s === 0) { const v = Math.round(l * 255); return [v, v, v]; }
@@ -37,56 +38,67 @@ function hsl2rgb(h, s, l) {
   const f = (t) => { t = (t + 1) % 1; if (t < 1 / 6) return p + (q - p) * 6 * t; if (t < 1 / 2) return q; if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6; return p; };
   return [Math.round(f(h + 1 / 3) * 255), Math.round(f(h) * 255), Math.round(f(h - 1 / 3) * 255)];
 }
-const lum = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
-
 async function raw(file) {
-  const { data } = await sharp(file).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const { data } = await sharp(file).resize(W, H).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   return data;
 }
+const toBuf = (u8) => sharp(Buffer.from(u8.buffer, u8.byteOffset, u8.byteLength), { raw: { width: W, height: H, channels: 4 } }).png().toBuffer();
+
+const panel = (id) => manifest.panels.find((p) => p.id === id)?.default ?? 1;
 
 const base = await raw(S('base.png'));
 const sil = await raw(S('silhouette.png'));
-const out = Buffer.from(base); // RGBA копия
 
-// один цвет на весь корпус: L из базы, H/S из цвета, покрытие = альфа силуэта
-const [hh, ss] = hexHsl(BODY_COLOR);
-for (let i = 0; i < W * H; i++) {
-  const za = sil[i * 4 + 3] / 255;
-  if (za <= 0) continue;
-  const L = lum(base[i * 4], base[i * 4 + 1], base[i * 4 + 2]) / 255;
-  const [r, g, b] = hsl2rgb(hh, ss, L);
-  out[i * 4] = out[i * 4] * (1 - za) + r * za;
-  out[i * 4 + 1] = out[i * 4 + 1] * (1 - za) + g * za;
-  out[i * 4 + 2] = out[i * 4 + 2] * (1 - za) + b * za;
+// base поверх прозрачного — несём RGB+альфу рендера изделия
+const bed = Buffer.from(base);
+
+// единая перекраска корпуса: L из базы, H/S из цвета, покрытие = альфа силуэта * интенсивность цвета
+const colorHex = manifest.color;
+const colorOpacity = panel('color');
+if (colorHex && colorOpacity > 0) {
+  const [hh, ss] = hexHsl(colorHex);
+  for (let i = 0; i < N; i++) {
+    const za = (sil[i * 4 + 3] / 255) * colorOpacity;
+    if (za <= 0) continue;
+    const L = lum(base[i * 4], base[i * 4 + 1], base[i * 4 + 2]) / 255;
+    const [r, g, b] = hsl2rgb(hh, ss, L);
+    bed[i * 4] = bed[i * 4] * (1 - za) + r * za;
+    bed[i * 4 + 1] = bed[i * 4 + 1] * (1 - za) + g * za;
+    bed[i * 4 + 2] = bed[i * 4 + 2] * (1 - za) + b * za;
+  }
+}
+const bedBuf = await toBuf(bed);
+
+// ткань: затайлить, обрезать по силуэту, понизить альфу до силы материала
+const material = manifest.materials[0];
+const fabOpacity = material.strength ?? panel('fabric');
+let fabricBuf = null;
+if (material.fabric) {
+  const fab = new Uint8ClampedArray(await raw(S(`fabrics/${material.id}.png`)));
+  for (let i = 0; i < N; i++) fab[i * 4 + 3] = Math.round((fab[i * 4 + 3] / 255) * (sil[i * 4 + 3] / 255) * fabOpacity * 255);
+  fabricBuf = await toBuf(fab);
 }
 
-const sofaBuf = await sharp(out, { raw: { width: W, height: H, channels: 4 } }).png().toBuffer();
+// ao (multiply) и sheen (screen *opacity)
+const aoBuf = await sharp(S('ao.png')).resize(W, H).png().toBuffer();
+const sheenOpacity = material.sheenOpacity ?? panel('sheen');
+const sheen = new Uint8ClampedArray(await raw(S('sheen.png')));
+for (let i = 0; i < N; i++) sheen[i * 4 + 3] = Math.round((sheen[i * 4 + 3] / 255) * sheenOpacity * 255);
+const sheenBuf = await toBuf(sheen);
 
-// ткань: затайлить, обрезать по силуэту, понизить альфу до силы
-const fab = new Uint8ClampedArray(await (await sharp(S(FABRIC)).resize(W, H, { fit: 'cover' }).ensureAlpha().raw().toBuffer({ resolveWithObject: true })).data);
-for (let i = 0; i < W * H; i++) fab[i * 4 + 3] = Math.round((fab[i * 4 + 3] / 255) * (sil[i * 4 + 3] / 255) * FABRIC_STRENGTH * 255);
-const fabricBuf = await sharp(fab, { raw: { width: W, height: H, channels: 4 } }).png().toBuffer();
+// сцена: фон-комната вниз, затем слои изделия
+const layers = [{ input: bedBuf, blend: 'over' }];
+if (fabricBuf) layers.push({ input: fabricBuf, blend: material.blend || 'soft-light' });
+layers.push({ input: aoBuf, blend: 'multiply' });
+layers.push({ input: sheenBuf, blend: 'screen' });
 
-// ao (multiply) и sheen (screen, *opacity)
-const aoBuf = await sharp(S('ao.png')).png().toBuffer();
-const sheen = new Uint8ClampedArray(await raw(S(SHEEN_FILE)));
-for (let i = 0; i < W * H; i++) sheen[i * 4 + 3] = Math.round((sheen[i * 4 + 3] / 255) * SHEEN_OPACITY * 255);
-const sheenBuf = await sharp(sheen, { raw: { width: W, height: H, channels: 4 } }).png().toBuffer();
+const bgInput = manifest.layers.background
+  ? await sharp(S('background.png')).resize(W, H).png().toBuffer()
+  : await sharp({ create: { width: W, height: H, channels: 3, background: { r: 238, g: 241, b: 245 } } }).png().toBuffer();
 
-// детали (ножки) поверх — normal
-const detailsBuf = await sharp(S('details.png')).png().toBuffer();
-
-// фон страницы + слои
-const bg = await sharp({ create: { width: W, height: H, channels: 3, background: { r: 238, g: 241, b: 245 } } }).png().toBuffer();
-await sharp(bg)
-  .composite([
-    { input: sofaBuf, blend: 'over' },
-    { input: fabricBuf, blend: 'soft-light' },
-    { input: aoBuf, blend: 'multiply' },
-    { input: sheenBuf, blend: 'screen' },
-    { input: detailsBuf, blend: 'over' },
-  ])
+await sharp(bgInput)
+  .composite(layers)
   .png()
-  .toFile(path.join(ROOT, 'outputs', 'sofa-final-preview.png'));
+  .toFile(path.join(ROOT, 'outputs', 'bed-final-preview.png'));
 
-console.log('wrote outputs/sofa-final-preview.png');
+console.log(`wrote outputs/bed-final-preview.png (color=${colorHex ?? 'off'}, material=${material.id})`);

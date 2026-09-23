@@ -1,4 +1,4 @@
-import type { Fabric, LayerId, SofaModel } from './SofaConfigurator';
+import type { BedModel, Fabric, LayerId } from './BedConfigurator';
 
 /** Слой с ползунком прозрачности (подпись + дефолт 0..1). */
 export interface PanelMeta {
@@ -7,7 +7,7 @@ export interface PanelMeta {
   default: number;
 }
 
-/** Материал в манифесте: ткань + собственный блик + параметры смешивания. */
+/** Материал = ткань-тайл + параметры смешивания (без зон и без своего блика). */
 export interface MaterialMeta {
   id: string;
   label: string;
@@ -16,38 +16,38 @@ export interface MaterialMeta {
   scale?: number;
   /** дефолтная прозрачность слоя «Ткань» при выборе материала */
   strength?: number;
-  sheen: string | null;
   /** дефолтная прозрачность слоя «Блики» при выборе материала */
-  sheenOpacity: number;
+  sheenOpacity?: number;
 }
 
+/** Пресет = единый цвет корпуса (одним кликом). */
 export interface ColorPreset {
   label: string;
   color: string;
 }
 
-export interface SofaManifest {
+export interface BedManifest {
   id: string;
   label: string;
   width: number;
   height: number;
-  /** цвет корпуса по умолчанию (null — серая база) */
-  color: string | null;
   layers: {
+    background?: string;
     base: string;
     silhouette: string;
     ao?: string;
     sheen?: string;
-    details?: string[];
   };
+  /** цвет корпуса по умолчанию (null — показать исходный рендер без перекраски) */
+  color: string | null;
   /** слои, у которых в UI есть ползунок прозрачности */
   panels: PanelMeta[];
   materials: MaterialMeta[];
   presets?: ColorPreset[];
 }
 
-export interface LoadedSofa {
-  model: SofaModel;
+export interface LoadedBed {
+  model: BedModel;
   panels: PanelMeta[];
   materials: MaterialMeta[];
   presets: ColorPreset[];
@@ -61,18 +61,17 @@ export function toFabric(m: MaterialMeta): Fabric {
     texture: m.fabric ?? '',
     scale: m.scale,
     blend: m.blend,
-    sheenTex: m.sheen ?? '',
   };
 }
 
 /** Приводит манифест к типу модели движка. */
-export function manifestToModel(m: SofaManifest): SofaModel {
+export function manifestToModel(m: BedManifest): BedModel {
   return {
+    background: m.layers.background,
     base: m.layers.base,
     silhouette: m.layers.silhouette,
     ao: m.layers.ao,
     sheen: m.layers.sheen,
-    details: m.layers.details,
     width: m.width,
     height: m.height,
   };
@@ -82,10 +81,10 @@ export function manifestToModel(m: SofaManifest): SofaModel {
  * Грузит манифест изделия по URL и разворачивает его в пропы конфигуратора.
  * Новые модели добавляются файлом JSON — без правки кода и без деплоя.
  */
-export async function loadSofaManifest(url: string): Promise<LoadedSofa> {
+export async function loadBedManifest(url: string): Promise<LoadedBed> {
   const res = await fetch(url, { cache: 'no-cache' });
   if (!res.ok) throw new Error(`Манифест не найден: ${url} (${res.status})`);
-  const json = (await res.json()) as SofaManifest;
+  const json = (await res.json()) as BedManifest;
 
   const defaultOpacity = {} as Record<LayerId, number>;
   for (const p of json.panels) defaultOpacity[p.id] = p.default;

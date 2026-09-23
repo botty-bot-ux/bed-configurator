@@ -1,0 +1,38 @@
+{
+  "id": "default",
+  "label": "Кровать «Милан»",
+  "width": 1200,
+  "height": 896,
+  "layers": {
+    "background": "/bed/background.png",
+    "base": "/bed/base.png",
+    "silhouette": "/bed/silhouette.png",
+    "ao": "/bed/ao.png",
+    "sheen": "/bed/sheen.png"
+  },
+  "color": null,
+  "panels": [
+    { "id": "background", "label": "Фон-сцена", "default": 1 },
+    { "id": "base", "label": "Основа", "default": 1 },
+    { "id": "color", "label": "Цвет корпуса", "default": 1 },
+    { "id": "fabric", "label": "Ткань", "default": 0.5 },
+    { "id": "ao", "label": "Тени", "default": 0.85 },
+    { "id": "sheen", "label": "Блики", "default": 0.4 }
+  ],
+  "materials": [
+    { "id": "velour", "label": "Велюр", "fabric": "/bed/fabrics/velour.png", "blend": "soft-light", "scale": 1.4, "strength": 0.6, "sheenOpacity": 0.45 },
+    { "id": "linen", "label": "Лён", "fabric": "/bed/fabrics/linen.png", "blend": "overlay", "scale": 1.0, "strength": 0.5, "sheenOpacity": 0.2 },
+    { "id": "twill", "label": "Твил", "fabric": "/bed/fabrics/twill.png", "blend": "hard-light", "scale": 0.9, "strength": 0.45, "sheenOpacity": 0.3 },
+    { "id": "leather", "label": "Кожа", "fabric": "/bed/fabrics/leather.png", "blend": "soft-light", "scale": 1.2, "strength": 0.55, "sheenOpacity": 0.6 },
+    { "id": "boucle", "label": "Букле", "fabric": "/bed/fabrics/boucle.png", "blend": "overlay", "scale": 1.6, "strength": 0.55, "sheenOpacity": 0.35 },
+    { "id": "none", "label": "Без ткани", "fabric": null, "sheenOpacity": 0 }
+  ],
+  "presets": [
+    { "label": "Беж", "color": "#c9a878" },
+    { "label": "Графит", "color": "#565b63" },
+    { "label": "Терракота", "color": "#b5563a" },
+    { "label": "Изумруд", "color": "#1f7a5a" },
+    { "label": "Индиго", "color": "#35509f" },
+    { "label": "Пудра", "color": "#c98a9a" }
+  ]
+}

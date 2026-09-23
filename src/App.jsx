@@ -1,17 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
-import SofaConfigurator from './SofaConfigurator.tsx';
-import { loadSofaManifest, toFabric } from './sofaManifest';
+import BedConfigurator from './BedConfigurator.tsx';
+import { loadBedManifest, toFabric } from './bedManifest';
 
-const MANIFEST_URL = '/sofas/default/manifest.json';
+const MANIFEST_URL = '/beds/default/manifest.json';
 
 export default function App() {
-  const [sofa, setSofa] = useState(null);
+  const [bed, setBed] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     let alive = true;
-    loadSofaManifest(MANIFEST_URL)
-      .then((s) => alive && setSofa(s))
+    loadBedManifest(MANIFEST_URL)
+      .then((b) => alive && setBed(b))
       .catch((e) => alive && setError(String(e?.message || e)));
     return () => { alive = false; };
   }, []);
@@ -25,7 +25,7 @@ export default function App() {
       </Shell>
     );
   }
-  if (!sofa) {
+  if (!bed) {
     return (
       <Shell>
         <div className="flex h-[52vh] items-center justify-center text-sm text-slate-400">
@@ -34,11 +34,11 @@ export default function App() {
       </Shell>
     );
   }
-  return <Configurator sofa={sofa} />;
+  return <Configurator bed={bed} />;
 }
 
-function Configurator({ sofa }) {
-  const { model, panels, materials, presets, defaultColor, defaultOpacity } = sofa;
+function Configurator({ bed }) {
+  const { model, panels, materials, presets, defaultColor, defaultOpacity } = bed;
 
   const [color, setColor] = useState(defaultColor);
   const [materialId, setMaterialId] = useState(materials[0]?.id ?? 'none');
@@ -58,53 +58,63 @@ function Configurator({ sofa }) {
     setOpacity((o) => ({
       ...o,
       fabric: m.strength ?? o.fabric,
-      sheen: m.sheenOpacity ?? 0,
+      sheen: m.sheenOpacity ?? o.sheen,
     }));
   };
 
+  const colorOn = color != null;
+
   return (
-    <Shell title={sofa.label}>
+    <Shell title={bed.label}>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1.4fr_1fr]">
         {/* Сцена */}
         <div className="rounded-2xl bg-white/70 p-6 shadow-sm ring-1 ring-slate-900/5">
-          <div className="rounded-xl bg-[radial-gradient(120%_120%_at_50%_0%,#ffffff_0%,#e9edf3_60%,#dbe1ea_100%)] p-4">
-            <SofaConfigurator model={model} fabric={fabric} color={color} opacity={opacity} />
+          <div className="overflow-hidden rounded-xl ring-1 ring-slate-900/5">
+            <BedConfigurator model={model} fabric={fabric} color={color} opacity={opacity} />
           </div>
         </div>
 
         {/* Управление */}
         <div className="space-y-6">
           <Card title="Цвет корпуса">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-xs text-slate-400">
+                {colorOn ? `Перекраска: ${color}` : 'Исходный рендер (без цвета)'}
+              </span>
+              <button
+                onClick={() => setColor(colorOn ? null : defaultColor ?? '#c9a878')}
+                className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium transition hover:border-slate-300 hover:bg-slate-100"
+              >
+                {colorOn ? 'Выключить' : 'Включить'}
+              </button>
+            </div>
+            <div className="flex items-center justify-between gap-3 py-1">
+              <span className="text-sm">Цвет</span>
+              <div className="flex items-center gap-2">
+                <code className="w-16 text-right text-xs text-slate-400">{color ?? '—'}</code>
                 <input
                   type="color"
                   value={color ?? '#cccccc'}
                   onChange={(e) => setColor(e.target.value)}
-                  className="h-9 w-12 rounded-lg"
+                  className="h-8 w-10 rounded"
                   aria-label="Цвет корпуса"
                 />
-                <code className="text-xs text-slate-400">{color ?? 'без цвета'}</code>
               </div>
-              <button
-                onClick={() => setColor(color ? null : defaultColor ?? '#c9ccd1')}
-                className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium transition hover:border-slate-300 hover:bg-slate-100"
-              >
-                {color ? 'Убрать цвет' : 'Вернуть цвет'}
-              </button>
             </div>
             {presets.length > 0 && (
-              <div className="mt-4 flex flex-wrap gap-2">
+              <div className="mt-3 flex flex-wrap gap-2">
                 {presets.map((p) => (
                   <button
                     key={p.label}
                     onClick={() => setColor(p.color)}
-                    className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium transition hover:border-slate-300 hover:bg-slate-100"
+                    className={
+                      'flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition ' +
+                      (color === p.color
+                        ? 'border-slate-800 bg-slate-800 text-white'
+                        : 'border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-slate-100')
+                    }
                   >
-                    <span
-                      className="h-3 w-3 rounded-full ring-1 ring-black/10"
-                      style={{ background: p.color }}
-                    />
+                    <span className="h-3 w-3 rounded-full ring-1 ring-black/10" style={{ background: p.color }} />
                     {p.label}
                   </button>
                 ))}
@@ -170,8 +180,9 @@ function Shell({ title, children }) {
             {title ? `${title} · ` : ''}Конфигуратор · PixiJS v8
           </h1>
           <p className="text-sm text-slate-500">
-            Один цвет корпуса + ползунок прозрачности на каждый слой:
-            основа · цвет · ткань · тени · блики · детали. Модель и палитра берутся из JSON-манифеста.
+            Единый цвет корпуса (перекраска по силуэту) + материал-ткань + ползунок прозрачности на
+            каждый слой: фон-сцена · основа · цвет · ткань · тени · блики. Модель и палитра берутся
+            из JSON-манифеста.
           </p>
         </header>
         {children}

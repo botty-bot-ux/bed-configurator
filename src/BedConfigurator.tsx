@@ -1,7 +1,13 @@
 import { useEffect, useRef } from 'react';
 import type { CSSProperties } from 'react';
-import { Application, Container, Sprite, TilingSprite, Assets, Texture } from 'pixi.js';
+import { Application, Container, Sprite, TilingSprite, Assets, Texture, Filter } from 'pixi.js';
 import type { BLEND_MODES } from 'pixi.js';
+
+// PixiJS #11311: продвинутые blend-режимы (overlay, soft-light, color, hue, ...)
+// рисуются фильтром с resolution по умолчанию 1; при разрешении рендерера не-степени-двух
+// (HiDPI dpr 1.25/1.5) фильтр покрывает лишь часть кадра → чёрные зоны / «не работает».
+// «inherit» заставляет все фильтры наследовать разрешение рендерера.
+Filter.defaultOptions.resolution = 'inherit';
 
 /* ============================ Типы ============================ */
 

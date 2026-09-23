@@ -1,54 +1,63 @@
 import { useEffect, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import { Application, Container, Sprite, TilingSprite, Assets, Texture } from 'pixi.js';
+import type { BLEND_MODES } from 'pixi.js';
 
 /* ============================ Типы ============================ */
 
-/** Слой, которым управляет пользователь (ползунок прозрачности). */
+/** Слой, которым управляет пользователь (прозрачность + стиль наложения). */
 export type LayerId = 'background' | 'base' | 'color' | 'fabric' | 'ao' | 'sheen';
+
+/** Стиль наложения — строка blend-режима Pixi ('normal', 'multiply', 'color', ...). */
+export type BlendMode = string;
 
 /**
  * Модель изделия: набор путей к спрайтам-слоям и размер «холста» в пикселях арта.
- * Без зон — перекрашивается весь корпус одним цветом (blend 'color' по силуэту).
+ * Без зон — перекрашивается весь корпус одним цветом (blend по силуэту).
  */
 export interface BedModel {
-  /** сцена-фон (комната); кладётся вниз без маски, может отсутствовать */
+  /** фон по умолчанию (из галереи фонов); может отсутствовать */
   background?: string;
   /** рендер изделия с собственной альфой (несёт яркость/светотень) */
   base: string;
   /** маска контура изделия — клиппинг ткани и перекраски */
   silhouette: string;
-  /** запечённые тени (multiply) */
+  /** запечённые тени */
   ao?: string;
-  /** блики (screen) */
+  /** блики */
   sheen?: string;
   width: number;
   height: number;
 }
 
-/** Ткань/материал — тайлинг поверх поверхности. */
+/** Ткань/материал — тайлинг поверх поверхности (blend теперь у слоя «fabric»). */
 export interface Fabric {
   texture: string;
   /** множитель размера тайла (1 = исходный тайл) */
   scale?: number;
-  blend?: 'overlay' | 'soft-light' | 'hard-light';
 }
 
 export interface BedConfiguratorProps {
   model: BedModel;
   fabric: Fabric;
-  /** цвет корпуса через blend 'color' (null — оставить исходный рендер без перекраски) */
+  /** цвет корпуса (null — оставить исходный рендер без перекраски) */
   color: string | null;
-  /** прозрачность каждого слоя 0..1 (слой «color» = интенсивность перекраски) */
+  /** активный фон из галереи (null — без фона) */
+  background: string | null;
+  /** прозрачность каждого слоя 0..1 */
   opacity: Record<LayerId, number>;
+  /** стиль наложения каждого слоя */
+  blend: Record<LayerId, BlendMode>;
   style?: CSSProperties;
 }
 
 /** Императивный движок: точечные обновления без пересоздания сцены. */
 export interface Engine {
   setColor(hex: string | null): void;
+  setBackground(url: string | null): void;
   setFabric(fabric: Fabric): void;
   setLayerOpacity(id: LayerId, v: number): void;
+  setLayerBlend(id: LayerId, mode: BlendMode): void;
   destroy(): void;
 }
 
@@ -66,10 +75,9 @@ const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 /**
  * Собирает Pixi-сцену слоями снизу вверх:
- *   background (normal) → base (normal) → color (по силуэту, blend 'color' + tint)
- *   → fabric (masked tiling) → ao (multiply) → sheen (screen).
- * Каждый слой получает независимую прозрачность через setLayerOpacity; слой «color»
- * задаёт интенсивность единой перекраски корпуса.
+ *   background → base → color (по силуэту) → fabric (masked tiling) → ao → sheen.
+ * Каждый слой имеет независимые прозрачность (setLayerOpacity) и стиль наложения
+ * (setLayerBlend). Фон переключается галереей через setBackground.
  */
 export async function createEngine(host: HTMLElement, model: BedModel): Promise<Engine> {
   const app = new Application();
@@ -117,7 +125,7 @@ export async function createEngine(host: HTMLElement, model: BedModel): Promise<
     });
   };
 
-  /* --- состояние прозрачности слоёв + цвет корпуса --- */
+  /* --- состояние слоёв: прозрачность, стиль наложения, цвет, фон --- */
   const alpha: Record<LayerId, number> = {
     background: 1,
     base: 1,
@@ -126,24 +134,58 @@ export async function createEngine(host: HTMLElement, model: BedModel): Promise<
     ao: 1,
     sheen: 1,
   };
+  const blend: Record<LayerId, BLEND_MODES> = {
+    background: 'normal',
+    base: 'normal',
+    color: 'color',
+    fabric: 'soft-light',
+    ao: 'multiply',
+    sheen: 'screen',
+  } as unknown as Record<LayerId, BLEND_MODES>;
   let bodyColor: string | null = null;
 
-  /* --- background: сцена-фон (комната) --- */
-  let background: Sprite | null = null;
-  if (model.background) {
-    background = fit(new Sprite(await load(model.background)));
-    background.blendMode = 'normal';
-    root.addChild(background);
-  }
+  /* --- background: сцена-фон (галерея) — спрайт есть всегда, скрываем при null --- */
+  const background = fit(new Sprite());
+  background.blendMode = blend.background;
+  background.visible = false;
+  root.addChild(background);
+  let bgUrl: string | null = null;
+  let bgToken = 0;
+
+  const applyBackground = (url: string | null) => {
+    const token = ++bgToken;
+    if (!url) {
+      bgUrl = null;
+      background.texture = Texture.EMPTY;
+      refresh();
+      invalidate();
+      return;
+    }
+    if (url === bgUrl) {
+      refresh();
+      invalidate();
+      return;
+    }
+    load(url)
+      .then((tex) => {
+        if (destroyed || token !== bgToken) return; // устаревшая загрузка фона
+        background.texture = tex;
+        fit(background);
+        bgUrl = url;
+        refresh();
+        invalidate();
+      })
+      .catch((e) => console.error('background load failed', url, e));
+  };
 
   /* --- base: рендер изделия (имеет альфу контура) --- */
   const base = fit(new Sprite(await load(model.base)));
-  base.blendMode = 'normal';
+  base.blendMode = blend.base;
   root.addChild(base);
 
-  /* --- color: единая перекраска корпуса = маска силуэта с blend 'color' + tint --- */
+  /* --- color: перекраска корпуса = маска силуэта + tint (blend задаётся слоем) --- */
   const colorSprite = fit(new Sprite(await load(model.silhouette)));
-  colorSprite.blendMode = 'color';
+  colorSprite.blendMode = blend.color;
   colorSprite.visible = false; // покажем при выборе цвета
   root.addChild(colorSprite);
 
@@ -157,32 +199,32 @@ export async function createEngine(host: HTMLElement, model: BedModel): Promise<
   let fabricUrl: string | null = null;
   let fabricToken = 0;
 
-  /* --- ao: multiply (запечённые тени) --- */
+  /* --- ao: запечённые тени --- */
   let ao: Sprite | null = null;
   if (model.ao) {
     ao = fit(new Sprite(await load(model.ao)));
-    ao.blendMode = 'multiply';
+    ao.blendMode = blend.ao;
     root.addChild(ao);
   }
 
-  /* --- sheen: screen (блики) --- */
+  /* --- sheen: блики --- */
   let sheen: Sprite | null = null;
   if (model.sheen) {
     sheen = fit(new Sprite(await load(model.sheen)));
-    sheen.blendMode = 'screen';
+    sheen.blendMode = blend.sheen;
     root.addChild(sheen);
   }
 
-  /* ------------------- единый пересчёт видимости/альфы ------------------- */
-  const refresh = () => {
-    if (background) {
-      background.alpha = clamp01(alpha.background);
-      background.visible = alpha.background > 0;
-    }
+  /* ------------------- единый пересчёт видимости/альфы/наложения ------------------- */
+  function refresh() {
+    background.blendMode = blend.background;
+    background.alpha = clamp01(alpha.background);
+    background.visible = bgUrl != null && alpha.background > 0;
 
+    base.blendMode = blend.base;
     base.alpha = clamp01(alpha.base);
 
-    // слой «color» = интенсивность перекраски; цвет — единый tint по силуэту
+    colorSprite.blendMode = blend.color;
     const colorOn = clamp01(alpha.color);
     if (bodyColor && colorOn > 0) {
       colorSprite.tint = hexToNum(bodyColor);
@@ -193,20 +235,25 @@ export async function createEngine(host: HTMLElement, model: BedModel): Promise<
     }
 
     if (fabricSprite) {
+      fabricSprite.blendMode = blend.fabric;
       fabricSprite.alpha = clamp01(alpha.fabric);
       fabricSprite.visible = alpha.fabric > 0;
     }
 
     if (ao) {
+      ao.blendMode = blend.ao;
       ao.alpha = clamp01(alpha.ao);
       ao.visible = alpha.ao > 0;
     }
 
     if (sheen) {
+      sheen.blendMode = blend.sheen;
       sheen.alpha = clamp01(alpha.sheen);
       sheen.visible = alpha.sheen > 0;
     }
-  };
+  }
+
+  if (model.background) applyBackground(model.background);
 
   /* ------------------------- публичный API ------------------------- */
 
@@ -216,6 +263,11 @@ export async function createEngine(host: HTMLElement, model: BedModel): Promise<
       bodyColor = hex;
       refresh();
       invalidate();
+    },
+
+    setBackground(url) {
+      if (destroyed) return;
+      applyBackground(url ?? null);
     },
 
     setFabric(fabric) {
@@ -240,7 +292,6 @@ export async function createEngine(host: HTMLElement, model: BedModel): Promise<
         }
         fabricSprite.width = model.width;
         fabricSprite.height = model.height;
-        fabricSprite.blendMode = fabric.blend ?? 'soft-light';
         const sc = fabric.scale ?? 1;
         fabricSprite.tileScale.set(sc, sc);
         refresh();
@@ -260,10 +311,18 @@ export async function createEngine(host: HTMLElement, model: BedModel): Promise<
       invalidate();
     },
 
+    setLayerBlend(id, mode) {
+      if (destroyed) return;
+      blend[id] = mode as unknown as BLEND_MODES;
+      refresh();
+      invalidate();
+    },
+
     destroy() {
       if (destroyed) return;
       destroyed = true;
-      fabricToken++; // отменяем незавершённую загрузку ткани
+      fabricToken++; // отменяем незавершённые загрузки ткани/фона
+      bgToken++;
       try {
         // НЕ разрушаем текстуры — они закешированы в Assets для повторного движка
         app.destroy(true, { children: true, texture: false, textureSource: false });
@@ -285,13 +344,15 @@ export default function BedConfigurator({
   model,
   fabric,
   color,
+  background,
   opacity,
+  blend,
   style,
 }: BedConfiguratorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<Engine | null>(null);
-  const latest = useRef({ fabric, color, opacity });
-  latest.current = { fabric, color, opacity };
+  const latest = useRef({ fabric, color, background, opacity, blend });
+  latest.current = { fabric, color, background, opacity, blend };
 
   // Пересоздаём движок только при смене модели.
   useEffect(() => {
@@ -312,8 +373,10 @@ export default function BedConfigurator({
         return;
       }
       engineRef.current = eng;
-      const { fabric: f, color: c, opacity: o } = latest.current;
+      const { fabric: f, color: c, background: bg, opacity: o, blend: b } = latest.current;
       for (const id of Object.keys(o) as LayerId[]) eng.setLayerOpacity(id, o[id]);
+      for (const id of Object.keys(b) as LayerId[]) eng.setLayerBlend(id, b[id]);
+      eng.setBackground(bg ?? null);
       eng.setColor(c ?? null);
       eng.setFabric(f);
     })();
@@ -328,12 +391,18 @@ export default function BedConfigurator({
 
   // Точечные обновления при смене пропсов (движок уже готов).
   useEffect(() => { engineRef.current?.setColor(color ?? null); }, [color]);
+  useEffect(() => { engineRef.current?.setBackground(background ?? null); }, [background]);
   useEffect(() => { engineRef.current?.setFabric(fabric); }, [fabric]);
   useEffect(() => {
     const eng = engineRef.current;
     if (!eng) return;
     for (const id of Object.keys(opacity) as LayerId[]) eng.setLayerOpacity(id, opacity[id]);
   }, [opacity]);
+  useEffect(() => {
+    const eng = engineRef.current;
+    if (!eng) return;
+    for (const id of Object.keys(blend) as LayerId[]) eng.setLayerBlend(id, blend[id]);
+  }, [blend]);
 
   return (
     <div

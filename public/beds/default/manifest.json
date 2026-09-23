@@ -4,20 +4,24 @@
   "width": 1200,
   "height": 896,
   "layers": {
-    "background": "/bed/background.png",
     "base": "/bed/base.png",
     "silhouette": "/bed/silhouette.png",
     "ao": "/bed/ao.png",
     "sheen": "/bed/sheen.png"
   },
+  "backgrounds": [
+    { "id": "bedroom", "label": "Спальня", "texture": "/bed/background.png" },
+    { "id": "studio", "label": "Студия", "texture": "/bed/background2.png" },
+    { "id": "none", "label": "Без фона", "texture": null }
+  ],
   "color": null,
   "panels": [
-    { "id": "background", "label": "Фон-сцена", "default": 1 },
-    { "id": "base", "label": "Основа", "default": 1 },
-    { "id": "color", "label": "Цвет корпуса", "default": 1 },
-    { "id": "fabric", "label": "Ткань", "default": 0.5 },
-    { "id": "ao", "label": "Тени", "default": 0.85 },
-    { "id": "sheen", "label": "Блики", "default": 0.4 }
+    { "id": "background", "label": "Фон-сцена", "default": 1, "blend": "normal" },
+    { "id": "base", "label": "Основа", "default": 1, "blend": "normal" },
+    { "id": "color", "label": "Цвет корпуса", "default": 1, "blend": "color" },
+    { "id": "fabric", "label": "Ткань", "default": 0.5, "blend": "soft-light" },
+    { "id": "ao", "label": "Тени", "default": 0.85, "blend": "multiply" },
+    { "id": "sheen", "label": "Блики", "default": 0.4, "blend": "screen" }
   ],
   "materials": [
     { "id": "velour", "label": "Велюр", "fabric": "/bed/fabrics/velour.png", "blend": "soft-light", "scale": 1.4, "strength": 0.6, "sheenOpacity": 0.45 },

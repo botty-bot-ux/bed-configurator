@@ -4,6 +4,27 @@ import { loadBedManifest, toFabric } from './bedManifest';
 
 const MANIFEST_URL = '/beds/default/manifest.json';
 
+/** Стили наложения, доступные в UI (значение = blend-режим Pixi). */
+const BLEND_MODES = [
+  ['normal', 'Обычный'],
+  ['multiply', 'Умнение'],
+  ['screen', 'Экран'],
+  ['overlay', 'Перекрытие'],
+  ['soft-light', 'Мягкий свет'],
+  ['hard-light', 'Жёсткий свет'],
+  ['color-dodge', 'Осветление'],
+  ['color-burn', 'Затемнение'],
+  ['difference', 'Разность'],
+  ['exclusion', 'Исключение'],
+  ['hue', 'Тон'],
+  ['saturation', 'Насыщенность'],
+  ['color', 'Цвет'],
+  ['luminosity', 'Светлота'],
+  ['add', 'Добавить'],
+  ['darken', 'Затемнить'],
+  ['lighten', 'Осветлить'],
+];
+
 export default function App() {
   const [bed, setBed] = useState(null);
   const [error, setError] = useState(null);
@@ -38,28 +59,39 @@ export default function App() {
 }
 
 function Configurator({ bed }) {
-  const { model, panels, materials, presets, defaultColor, defaultOpacity } = bed;
+  const {
+    model, panels, materials, presets, backgrounds,
+    defaultBackgroundId, defaultColor, defaultOpacity, defaultBlend,
+  } = bed;
 
   const [color, setColor] = useState(defaultColor);
+  const [backgroundId, setBackgroundId] = useState(defaultBackgroundId);
   const [materialId, setMaterialId] = useState(materials[0]?.id ?? 'none');
   const [opacity, setOpacity] = useState(defaultOpacity);
+  const [blend, setBlend] = useState(defaultBlend);
 
   const material = useMemo(
     () => materials.find((m) => m.id === materialId) ?? materials[0],
     [materials, materialId],
   );
   const fabric = useMemo(() => (material ? toFabric(material) : { texture: '' }), [material]);
+  const background = useMemo(
+    () => backgrounds.find((b) => b.id === backgroundId)?.texture ?? null,
+    [backgrounds, backgroundId],
+  );
 
   const setLayer = (id, v) => setOpacity((o) => ({ ...o, [id]: v }));
+  const setLayerBlend = (id, mode) => setBlend((b) => ({ ...b, [id]: mode }));
 
   const pickMaterial = (m) => {
     setMaterialId(m.id);
-    // материал задаёт дефолты прозрачности ткани и бликов
+    // материал задаёт дефолты прозрачности ткани/бликов и стиль наложения ткани
     setOpacity((o) => ({
       ...o,
       fabric: m.strength ?? o.fabric,
       sheen: m.sheenOpacity ?? o.sheen,
     }));
+    if (m.blend) setLayerBlend('fabric', m.blend);
   };
 
   const colorOn = color != null;
@@ -70,7 +102,14 @@ function Configurator({ bed }) {
         {/* Сцена */}
         <div className="rounded-2xl bg-white/70 p-6 shadow-sm ring-1 ring-slate-900/5">
           <div className="overflow-hidden rounded-xl ring-1 ring-slate-900/5">
-            <BedConfigurator model={model} fabric={fabric} color={color} opacity={opacity} />
+            <BedConfigurator
+              model={model}
+              fabric={fabric}
+              color={color}
+              background={background}
+              opacity={opacity}
+              blend={blend}
+            />
           </div>
         </div>
 
@@ -122,6 +161,25 @@ function Configurator({ bed }) {
             )}
           </Card>
 
+          <Card title="Фон">
+            <div className="flex flex-wrap gap-2">
+              {backgrounds.map((b) => (
+                <button
+                  key={b.id}
+                  onClick={() => setBackgroundId(b.id)}
+                  className={
+                    'rounded-lg border px-3 py-2 text-xs font-medium transition ' +
+                    (b.id === backgroundId
+                      ? 'border-slate-800 bg-slate-800 text-white'
+                      : 'border-slate-200 bg-white hover:bg-slate-50')
+                  }
+                >
+                  {b.label}
+                </button>
+              ))}
+            </div>
+          </Card>
+
           <Card title="Материал">
             <div className="grid grid-cols-2 gap-2">
               {materials.map((m) => (
@@ -141,26 +199,38 @@ function Configurator({ bed }) {
             </div>
           </Card>
 
-          <Card title="Прозрачность слоёв">
-            <div className="space-y-3">
+          <Card title="Слои">
+            <div className="space-y-4">
               {panels.map((p) => (
-                <div key={p.id}>
-                  <div className="mb-1 flex items-center justify-between">
+                <div key={p.id} className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
                     <span className="text-sm">{p.label}</span>
-                    <span className="text-xs tabular-nums text-slate-500">
+                    <select
+                      value={blend[p.id] ?? 'normal'}
+                      onChange={(e) => setLayerBlend(p.id, e.target.value)}
+                      className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 transition hover:border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                      aria-label={`Стиль наложения: ${p.label}`}
+                    >
+                      {BLEND_MODES.map(([value, label]) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={opacity[p.id] ?? 0}
+                      onChange={(e) => setLayer(p.id, parseFloat(e.target.value))}
+                      className="w-full accent-slate-800"
+                      aria-label={`Прозрачность: ${p.label}`}
+                    />
+                    <span className="w-9 text-right text-xs tabular-nums text-slate-500">
                       {(opacity[p.id] ?? 0).toFixed(2)}
                     </span>
                   </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={opacity[p.id] ?? 0}
-                    onChange={(e) => setLayer(p.id, parseFloat(e.target.value))}
-                    className="w-full accent-slate-800"
-                    aria-label={p.label}
-                  />
                 </div>
               ))}
             </div>
@@ -180,9 +250,9 @@ function Shell({ title, children }) {
             {title ? `${title} · ` : ''}Конфигуратор · PixiJS v8
           </h1>
           <p className="text-sm text-slate-500">
-            Единый цвет корпуса (перекраска по силуэту) + материал-ткань + ползунок прозрачности на
-            каждый слой: фон-сцена · основа · цвет · ткань · тени · блики. Модель и палитра берутся
-            из JSON-манифеста.
+            Единый цвет корпуса (перекраска по силуэту) · галерея фонов · материал-ткань. У каждого
+            слоя — свой стиль наложения и ползунок прозрачности: фон-сцена · основа · цвет · ткань ·
+            тени · блики. Модель и палитра берутся из JSON-манифеста.
           </p>
         </header>
         {children}
